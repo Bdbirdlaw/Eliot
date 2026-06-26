@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+  }
+  /* Headlines lean on the editorial display serif by default. */
+  h1, h2, h3 {
+    @apply font-display;
+  }
+  ::selection {
+    background: theme("colors.accent.DEFAULT");
+    color: white;
+  }
+}
+
+@layer components {
+  /* Eyebrow label / section numeral treatment */
+  .eyebrow {
+    @apply font-mono text-xs uppercase tracking-label text-gray-mut;
+  }
+  .numeral {
+    @apply font-mono text-sm tracking-label text-gray-mut;
+  }
+  /* Hairline framed card, not a heavy shadow */
+  .card {
+    @apply border border-gray-rule bg-paper-raised;
+  }
+  .card-dark {
+    @apply border border-night-rule bg-night-raised;
+  }
+  /* Hairline rule */
+  .rule {
+    @apply border-t border-gray-rule;
+  }
+  /* Restrained buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium
+           transition-colors duration-200 disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ink {
+    @apply btn bg-ink text-paper hover:bg-ink-soft;
+  }
+  .btn-accent {
+    @apply btn bg-accent text-white hover:bg-accent-soft;
+  }
+  .btn-ghost {
+    @apply btn border border-gray-rule text-ink hover:bg-paper;
+  }
+  /* Form controls read like a well set document */
+  .field {
+    @apply w-full border border-gray-rule bg-paper-raised px-3 py-2 text-ink
+           outline-none focus:border-accent focus:ring-1 focus:ring-accent;
+  }
+  .label {
+    @apply block text-sm font-medium text-ink mb-1.5;
+  }
+  /* Status chips for the triage queue */
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium border;
+  }
+  .chip-go { @apply chip text-go border-go/40 bg-go/5; }
+  .chip-hold { @apply chip text-hold border-hold/40 bg-hold/5; }
+  .chip-stop { @apply chip text-stop border-stop/40 bg-stop/5; }
+}
+
+/* Honor reduced motion (section 7). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

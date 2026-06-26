@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maintenance triage prototype</title>
+    <style>
+      :root {
+        --ink: #14130f;
+        --paper: #f6f3ec;
+        --rule: #d9d4c7;
+        --mut: #8b8676;
+        --accent: #1f3df0;
+        --go: #2f7d4f;
+        --hold: #b5872a;
+        --stop: #b23b2e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      .wrap { max-width: 560px; margin: 0 auto; padding: 24px 18px 64px; }
+      h1 { font-size: 1.5rem; margin: 0 0 4px; }
+      .eyebrow { font: 0.7rem/1 ui-monospace, monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mut); }
+      label { display: block; font-weight: 600; margin: 18px 0 6px; }
+      input, select, textarea {
+        width: 100%; padding: 12px; font: inherit; border: 1px solid var(--rule); background: #fffdf7;
+      }
+      textarea { min-height: 90px; }
+      .seg { display: flex; gap: 8px; }
+      .seg button {
+        flex: 1; padding: 14px; border: 1px solid var(--rule); background: #fffdf7; font: inherit; cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+      .submit { width: 100%; margin-top: 24px; padding: 16px; border: none; background: var(--ink); color: var(--paper); font: inherit; font-weight: 600; cursor: pointer; }
+      .hint { color: var(--mut); font-size: 0.85rem; margin-top: 6px; }
+      .result { margin-top: 24px; border: 1px solid var(--rule); padding: 18px; background: #fffdf7; display: none; }
+      .badge { display: inline-block; padding: 4px 10px; border: 1px solid; font-size: 0.8rem; font-weight: 600; }
+      .auto { color: var(--go); border-color: var(--go); }
+      .queue { color: var(--hold); border-color: var(--hold); }
+      .escalate { color: var(--stop); border-color: var(--stop); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="eyebrow">Eliot OS / Handyman</p>
+      <h1>Report a maintenance issue</h1>
+      <p class="hint">Most issues resolve right here without waiting on anyone.</p>
+
+      <label for="ws">Property or workstream</label>
+      <select id="ws">
+        <option>Unit 4B, 220 Rosa Parks</option>
+        <option>Duplex A, 1109 Fatherland</option>
+        <option>Storefront, 98 Volunteer Drive</option>
+      </select>
+
+      <label for="issue">What is the issue</label>
+      <textarea id="issue" placeholder="Describe what you see"></textarea>
+
+      <label>Is anyone's safety or ability to stay in the home affected right now</label>
+      <div class="seg" id="safety">
+        <button type="button" data-v="yes">Yes</button>
+        <button type="button" data-v="no" aria-pressed="true">No</button>
+      </div>
+
+      <label>Do you have a price</label>
+      <div class="seg" id="hasPrice">
+        <button type="button" data-v="yes">Yes</button>
+        <button type="button" data-v="no" aria-pressed="true">No</button>
+      </div>
+      <input id="amount" type="number" placeholder="Amount in dollars" style="margin-top:8px; display:none" />
+
+      <label>Can it wait until tomorrow</label>
+      <div class="seg" id="canWait">
+        <button type="button" data-v="yes" aria-pressed="true">Yes</button>
+        <button type="button" data-v="no">No</button>
+      </div>
+
+      <label for="photo">Photo (required)</label>
+      <input id="photo" type="file" accept="image/*" capture="environment" />
+      <p class="hint">No photo possible, such as a locked unit? <a href="#" id="noPhoto">Tell us why instead.</a></p>
+      <textarea id="noPhotoReason" placeholder="Why a photo is not possible" style="display:none"></textarea>
+
+      <button class="submit" id="submit">Submit report</button>
+
+      <div class="result" id="result">
+        <span class="badge" id="badge"></span>
+        <p id="summary" style="margin-top:12px"></p>
+        <p id="recommendation" style="color:var(--mut)"></p>
+      </div>
+    </div>
+
+    <script>
+      // This prototype mirrors the server triage in src/lib/triage.ts:
+      //   Hard rule 1: safety affected => escalate.
+      //   Hard rule 2: price <= threshold AND can wait => auto.
+      //   Otherwise a keyword heuristic stands in for the vision model.
+      //   Safety net: never auto over threshold or without a quote => queue.
+      //   No photo (escape hatch) routes straight to the queue.
+      var THRESHOLD = 500;
+      var seg = {};
+      ["safety", "hasPrice", "canWait"].forEach(function (id) {
+        var box = document.getElementById(id);
+        seg[id] = box.querySelector('[aria-pressed="true"]').dataset.v;
+        box.querySelectorAll("button").forEach(function (b) {
+          b.addEventListener("click", function () {
+            box.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+            b.setAttribute("aria-pressed", "true");
+            seg[id] = b.dataset.v;
+            if (id === "hasPrice") document.getElementById("amount").style.display = b.dataset.v === "yes" ? "block" : "none";
+          });
+        });
+      });
+      document.getElementById("noPhoto").addEventListener("click", function (e) {
+        e.preventDefault();
+        document.getElementById("noPhotoReason").style.display = "block";
+      });
+
+      var ESCALATE = ["water","leak","flood","gas","smoke","fire","spark","electrical","exposed","structural","collapse","ceiling","mold","break in","lock","security","no heat","no power"];
+      var AUTO = ["drip","squeak","loose","cosmetic","paint","caulk","filter","bulb","handle","knob","minor"];
+
+      function triage() {
+        var issue = document.getElementById("issue").value.toLowerCase();
+        var hasPrice = seg.hasPrice === "yes";
+        var amount = parseFloat(document.getElementById("amount").value || "0");
+        var canWait = seg.canWait === "yes";
+        var photo = document.getElementById("photo").files.length > 0;
+        var noPhotoReason = document.getElementById("noPhotoReason").value.trim();
+
+        if (!photo && !noPhotoReason) return { error: "Add a photo, or say why one is not possible." };
+
+        if (seg.safety === "yes") return { bucket: "escalate", summary: "Safety or habitability is affected.", rec: "Escalated immediately for a person to handle." };
+        if (!photo) return { bucket: "queue", summary: "No photo available: " + noPhotoReason, rec: "Routed to the review queue." };
+        if (hasPrice && amount > 0 && amount <= THRESHOLD && canWait) return { bucket: "auto", summary: "Routine and within the auto approve threshold.", rec: "Logged. Go ahead and proceed." };
+
+        var hit = ESCALATE.find(function (w) { return issue.indexOf(w) > -1; });
+        if (hit) return { bucket: "escalate", summary: "The description suggests a serious issue.", rec: "Escalated for a person to handle." };
+        var auto = AUTO.find(function (w) { return issue.indexOf(w) > -1; });
+        if (auto && canWait && hasPrice && amount <= THRESHOLD) return { bucket: "auto", summary: "Routine, low severity.", rec: "Logged. Proceed." };
+        return { bucket: "queue", summary: "Needs a quick decision.", rec: hasPrice ? "Review the quote and approve." : "Provide a quote, then it will be approved." };
+      }
+
+      document.getElementById("submit").addEventListener("click", function () {
+        var r = triage();
+        var box = document.getElementById("result");
+        if (r.error) { alert(r.error); return; }
+        box.style.display = "block";
+        var badge = document.getElementById("badge");
+        badge.className = "badge " + r.bucket;
+        badge.textContent = r.bucket === "auto" ? "Cleared to proceed" : r.bucket === "queue" ? "Queued for review" : "Escalated";
+        document.getElementById("summary").textContent = r.summary;
+        document.getElementById("recommendation").textContent = r.rec;
+      });
+    </script>
+  </body>
+</html>

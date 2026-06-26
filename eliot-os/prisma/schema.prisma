@@ -1,0 +1,246 @@
+// Eliot OS operational database.
+//
+// IMPORTANT (Source of Truth): this database holds ONLY this app's own state:
+// accounts, sessions, bookings, email drafts, provider config, and the
+// maintenance reports the Handyman generates before they are handed to the
+// vault. It is NOT a tracker for deals, properties as a portfolio, tasks, or
+// meetings. The Obsidian vault (maintained by ProxyClaw) owns those.
+//
+// SQLite for local dev. Written so a move to Postgres is a connection string
+// change: no SQLite specific features, enums modeled as validated String fields
+// (see src/lib/constants.ts for the allowed values).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --- People and access -------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  // role: contractor | tenant | investor | family_member | eliot | operator
+  role      String
+  // experience scope: contractor | portfolio | fund | family | operator
+  experience String
+  // family_id: "A" | "B" | null. Required for role=family_member.
+  familyId  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  magicLinks MagicLink[]
+  sessions   Session[]
+  reports    MaintenanceReport[] @relation("reporter")
+  bookings   Booking[]
+  drafts     EmailDraft[]        @relation("draftTo")
+  priority   PeoplePriority?
+  journeyEnrollments JourneyEnrollment[] @relation("enrollments")
+
+  @@index([experience, familyId])
+}
+
+model MagicLink {
+  token     String    @id
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// --- Workstreams and properties ----------------------------------------------
+// Workstreams are first class. The seven real names are seeded with NO
+// experience tag. Eliot assigns each one a lane in the Operator Console.
+
+model Workstream {
+  id    String  @id @default(cuid())
+  name  String  @unique
+  // experience tag: portfolio | fund | family_a | family_b | null (unassigned)
+  experience String?
+  notes String?
+  createdAt DateTime @default(now())
+
+  properties Property[]
+  reports    MaintenanceReport[]
+}
+
+model Property {
+  id           String      @id @default(cuid())
+  label        String
+  address      String?
+  workstreamId String?
+  workstream   Workstream? @relation(fields: [workstreamId], references: [id])
+  createdAt    DateTime    @default(now())
+
+  @@index([workstreamId])
+}
+
+// --- The Handyman: maintenance reports ---------------------------------------
+// These rows are created here, then handed to the vault inbox via VaultSink.
+// vaultEventPath records where the append only event file was written.
+
+model MaintenanceReport {
+  id             String      @id @default(cuid())
+  workstreamId   String
+  workstream     Workstream  @relation(fields: [workstreamId], references: [id])
+  reporterId     String
+  reporter       User        @relation("reporter", fields: [reporterId], references: [id])
+  issue          String
+  safetyAffected Boolean
+  hasQuote       Boolean
+  amount         Float?
+  canWait        Boolean
+  photoUrl       String?
+  // why a photo was not possible (escape hatch); routes straight to queue
+  noPhotoReason  String?
+  // bucket: auto | queue | escalate
+  bucket         String?
+  // how the bucket was decided: hard_safety | hard_threshold | model | failsafe
+  decisionSource String?
+  summary        String?
+  recommendation String?
+  // status: logged | queued | escalated | resolved
+  status         String      @default("queued")
+  vaultEventPath String?
+  createdAt      DateTime    @default(now())
+
+  @@index([workstreamId])
+  @@index([status])
+}
+
+// --- Booking -----------------------------------------------------------------
+
+model BookingRule {
+  // one rule per role: contractor | tenant | investor | family_member
+  role             String   @id
+  slotMinutes      Int
+  leadTimeHours    Int
+  requiresApproval Boolean
+  // priority: lower number sorts higher in the operator request queue
+  priority         Int
+  routeToTriage    Boolean  @default(false)
+  updatedAt        DateTime @updatedAt
+}
+
+model Booking {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  experience String
+  start      DateTime
+  end        DateTime
+  // status: requested | confirmed | declined | cancelled
+  status     String   @default("requested")
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([experience])
+}
+
+// --- Email (draft and approve) -----------------------------------------------
+
+model EmailDraft {
+  id          String    @id @default(cuid())
+  // lane: contractor | portfolio | fund | family
+  lane        String
+  toUserId    String?
+  toUser      User?     @relation("draftTo", fields: [toUserId], references: [id])
+  toEmail     String
+  subject     String
+  body        String
+  // status: draft | approved | sent | discarded
+  status      String    @default("draft")
+  // true only for whitelisted routine templates in contractor/portfolio lanes
+  autoSendEligible Boolean @default(false)
+  templateKey String?
+  approvedBy  String?
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status])
+  @@index([lane])
+}
+
+// --- People priority (PRIVATE, never exposed to any external endpoint) --------
+// Feeds only the prioritization rubric weighting inside tier 3 (someone waiting
+// on you). Never rendered as a label, tier, or score in any experience.
+
+model PeoplePriority {
+  id       String @id @default(cuid())
+  personId String @unique
+  person   User   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  weight   Int    @default(0)
+  note     String?
+}
+
+// --- Nurture journeys --------------------------------------------------------
+// Multi step email sequences. The orchestration lives here; Resend is only the
+// delivery pipe for approved drafts. For high stakes lanes (and by choice for
+// the contractor lane here) each step lands as a DRAFT in the approval queue
+// rather than auto sending, so nothing leaves without a human.
+
+model Journey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  // email lane: contractor | portfolio | fund | family
+  lane      String
+  audience  String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  steps       JourneyStep[]
+  enrollments JourneyEnrollment[]
+}
+
+model JourneyStep {
+  id          String  @id @default(cuid())
+  journeyId   String
+  journey     Journey @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  // 1 based order in the sequence
+  order       Int
+  // days after enrollment this step is due
+  dayOffset   Int
+  subject     String
+  body        String
+  templateKey String?
+
+  @@unique([journeyId, order])
+  @@index([journeyId])
+}
+
+model JourneyEnrollment {
+  id          String    @id @default(cuid())
+  journeyId   String
+  journey     Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation("enrollments", fields: [userId], references: [id], onDelete: Cascade)
+  // status: active | completed | cancelled
+  status      String    @default("active")
+  // number of steps already emitted as drafts
+  currentStep Int       @default(0)
+  enrolledAt  DateTime  @default(now())
+  nextRunAt   DateTime?
+
+  @@unique([journeyId, userId])
+  @@index([status, nextRunAt])
+}
