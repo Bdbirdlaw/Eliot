@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# prisma local db
+/prisma/dev.db
+/prisma/dev.db-journal
+
+# uploaded photos (mock storage) and the mock vault inbox
+/public/uploads/*
+!/public/uploads/.gitkeep
+/vault_inbox/*
+!/vault_inbox/.gitkeep
+
+# env
+.env
+.env*.local
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+.vercel
+*.tsbuildinfo
