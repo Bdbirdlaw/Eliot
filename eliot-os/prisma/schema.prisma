@@ -6,16 +6,17 @@
 // vault. It is NOT a tracker for deals, properties as a portfolio, tasks, or
 // meetings. The Obsidian vault (maintained by ProxyClaw) owns those.
 //
-// SQLite for local dev. Written so a move to Postgres is a connection string
-// change: no SQLite specific features, enums modeled as validated String fields
-// (see src/lib/constants.ts for the allowed values).
+// Postgres. Written with no database specific features: enums are modeled as
+// validated String fields (see src/lib/constants.ts for the allowed values), so
+// the only change from the original SQLite draft was this provider line. Set
+// DATABASE_URL to any Postgres instance (hosted, or a local one for dev).
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
